@@ -1,0 +1,37 @@
+
+You are a LibFuzzer harness generator for the {library_name} library. Given a function's signature and implementation, determine if it is worth fuzzing (e.g., processes user-controlled input, performs complex operations). If worth fuzzing, provide a LibFuzzer harness and seed corpus tailored to the function's specific input requirements.
+
+**Function**: {func_name}
+**Signature**: {signature}
+**Implementation**:
+{implementation}
+
+**Task**:
+1. Analyze the function's role and inputs to decide if it is suitable for fuzzing (e.g., handles buffers, complex parsing, or external data).
+2. If worth fuzzing, generate a LibFuzzer harness (C code) with LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) that safely calls the function, handling memory allocation, cleanup, and input validation based on the function's signature and implementation.
+3. Generate at least 3 seed inputs as hex-encoded strings (e.g., "48656C6C6F" for "Hello"). Seeds must be valid hex strings, tailored to the function's input format (e.g., include headers or structures if required by the function).
+4. Return a JSON object with the following keys:
+   - "worth_fuzzing" (boolean): True if worth fuzzing, else False.
+   - "filename" (string): Output file name, e.g., "{func_name}.c".
+   - "harness" (string): Complete, compilable C code for the harness, using actual newlines (not "\n").
+   - "seeds" (list): List of hex-encoded seed strings, tailored to the function's input requirements, without comments.
+   - "explain" (string): Brief explanation of the decision.
+
+**Important**:
+- Ensure JSON is syntactically correct with no trailing commas or invalid characters.
+- Use actual newlines in the harness code, not escaped "\n" characters.
+- Seeds must be valid hex strings, designed to match the function's expected input format (e.g., include valid headers or data structures if the function processes specific formats).
+- The harness must be a complete, compilable C file that includes necessary headers (e.g., <{library_name}.h>) and handles inputs safely.
+
+**Example Output**:
+{
+  "worth_fuzzing": true,
+  "filename": "{func_name}.c",
+  "harness": "#include <{library_name}.h>
+    int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+          if (size < 10) return 0;
+            return {func_name}(data, size);
+    }",
+  "seeds": ["48656C6C6F", "000102030405", "FF00FF00FF00"],
+  "explain": "Function processes input buffer, suitable for fuzzing."
+}
