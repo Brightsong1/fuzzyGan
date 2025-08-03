@@ -24,29 +24,29 @@ Install dependencies:
 ```python pip install torch google-generativeai numpy ```
 
 Set API key:
-```bash export GEMINI_API_KEY="your-api-key" ```
+```export GEMINI_API_KEY="your-api-key" ```
 
 ## Usage
 ### Commands
 
 List Available Libraries:Lists all libraries in oss-fuzz/projects/ with a build.sh file.
-```bash python fuzzer.py list-libraries --oss-fuzz-dir ./oss-fuzz ```
+```python fuzzer.py list-libraries --oss-fuzz-dir ./oss-fuzz ```
 
 
 List Analyzed Libraries:Lists libraries with an analysis_summary.json in the output directory.
-```bash python fuzzer.py list-analyzed --out-dir fuzz_out --oss-fuzz-dir ./oss-fuzz ```
+```python fuzzer.py list-analyzed --out-dir fuzz_out --oss-fuzz-dir ./oss-fuzz ```
 
 
 Analyze a Library:Builds the library using build.sh and analyzes all .h and .hpp files in the specified header directory.
-```bash python fuzzer.py analyze --library zlib --header-dir ./oss-fuzz/projects/zlib --exclude-prefixes zlib,get_crc --skip-functions zlibVersion,get_crc_table --out-dir fuzz_out --oss-fuzz-dir ./oss-fuzz ```
+```python fuzzer.py analyze --library zlib --header-dir ./oss-fuzz/projects/zlib --exclude-prefixes zlib,get_crc --skip-functions zlibVersion,get_crc_table --out-dir fuzz_out --oss-fuzz-dir ./oss-fuzz ```
 
 
 Fuzz a Library:Compiles and runs fuzzers for all functions deemed worth fuzzing.
-```bash python fuzzer.py fuzz --library zlib --out-dir fuzz_out --oss-fuzz-dir ./oss-fuzz ```
+```python fuzzer.py fuzz --library zlib --out-dir fuzz_out --oss-fuzz-dir ./oss-fuzz ```
 
 
 VAE-Based Fuzzing:Performs VAE-based fuzzing for a specific function, using coverage feedback to guide input generation.
-```bash python vae_fuzzing.py --function uncompress --library zlib --out-dir fuzz_out --oss-fuzz-dir ./oss-fuzz ```
+```python vae_fuzzing.py --function uncompress --library zlib --out-dir fuzz_out --oss-fuzz-dir ./oss-fuzz ```
 
 
 ## Future Improvements
