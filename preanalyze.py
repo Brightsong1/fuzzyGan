@@ -31,7 +31,7 @@ def extract_function_definition(func_name: str, src_dir: str) -> str:
     if not src_dir.is_dir():
         return "Implementation not found."
     func_re = re.compile(r'(?:^|\n)\s*([\w\s*]+)\s+\b' + re.escape(func_name) + r'\b\s*\(([^)]*)\)\s*', re.MULTILINE)
-    for c_file in src_dir.glob("*.c"):
+    for c_file in src_dir.rglob("*.c"):  # Changed to rglob for recursive search
         with c_file.open('r') as f:
             content = f.read()
         match = func_re.search(content)
