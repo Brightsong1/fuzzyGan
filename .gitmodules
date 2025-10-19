@@ -1,3 +1,6 @@
 [submodule "oss-fuzz"]
 	path = oss-fuzz
 	url = https://github.com/google/oss-fuzz.git
+[submodule "tools/fuzz-introspector"]
+	path = tools/fuzz-introspector
+	url = https://github.com/ossf/fuzz-introspector.git
