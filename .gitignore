@@ -1,4 +1,3 @@
-/oss-fuzz/
 /fuzz_out/
 .venv/
 toolchains
