@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from oss_fuzz_interceptor import intercept
+from introspector_adapter import collect_summary, ensure_python_path
 from storage import open_storage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -121,12 +121,15 @@ def compile_fuzzer(
     run_cmd(cmd)
 
 
-def run_fuzzing(out_dir: Path, library_name: str, oss_fuzz_dir: Path, storage, run_id: int, db_path: Path) -> None:
+def run_fuzzing(out_dir: Path, library_name: str, oss_fuzz_dir: Path, storage, run_id: int) -> None:
     summary = load_analysis_summary(out_dir, library_name)
     project_dir = oss_fuzz_dir / "projects" / library_name
     library_out_dir = get_build_out_dir(oss_fuzz_dir, library_name)
     ensure_build_dirs(out_dir / library_name, library_out_dir)
 
+    introspector_candidates = [out_dir / library_name / "introspector"]
+
+    fuzzed_any = False
     for func in summary.get("functions", []):
         if not func.get("worth_fuzzing") or not func.get("harness_path") or not func.get("seed_dir"):
             continue
@@ -151,8 +154,12 @@ def run_fuzzing(out_dir: Path, library_name: str, oss_fuzz_dir: Path, storage, r
         corpus_dir = Path(func["seed_dir"])
         run_cmd([binary_path, corpus_dir], timeout=300)
         storage.record_event(run_id, "fuzz_invocation", f"{func['name']} with corpus {corpus_dir}")
-        diagnostics = intercept(oss_fuzz_dir, db_path, library_name, binary_path, corpus_dir)
-        storage.record_event(run_id, "interceptor", json.dumps(diagnostics))
+        fuzzed_any = True
+
+    if fuzzed_any:
+        summary_data = collect_summary(library_name, oss_fuzz_dir, extras=introspector_candidates)
+        if summary_data:
+            storage.record_event(run_id, "introspector_summary", json.dumps(summary_data))
 
 
 def list_libraries(oss_fuzz_dir: Path) -> List[str]:
@@ -235,7 +242,7 @@ def main() -> None:
         storage = open_storage(db_path)
         run_id = storage.start_run("fuzz", config.name, metadata={"out_dir": str(out_dir)})
         try:
-            run_fuzzing(out_dir, config.name, oss_fuzz_dir, storage, run_id, db_path)
+            run_fuzzing(out_dir, config.name, oss_fuzz_dir, storage, run_id)
             storage.finish_run(run_id, "completed")
         except Exception as exc:  # noqa: BLE001
             storage.finish_run(run_id, "failed", {"error": str(exc)})
