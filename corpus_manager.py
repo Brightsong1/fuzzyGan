@@ -1,52 +1,102 @@
-import glob
-import os
-import shutil
-import numpy as np
-from pathlib import Path
-import binascii
-import zipfile
 import logging
+import zipfile
+from pathlib import Path
+from typing import List
+
+import numpy as np
+import torch
+
+from io import BytesIO
 
 MAX_INPUT_SIZE = 1024
 MAX_SEEDS_TO_LOG = 5
 MAX_BYTES_TO_LOG = 64
 MAX_CORPUS_SIZE = 271
 
-def load_corpus(corpus_dir):
-    data = []
-    for f in glob.glob(str(corpus_dir / "*.bin")):
-        with open(f, 'rb') as bf:
-            bytes_data = bf.read(MAX_INPUT_SIZE)
-            if len(bytes_data) < MAX_INPUT_SIZE:
-                bytes_data += b'\x00' * (MAX_INPUT_SIZE - len(bytes_data))
-            else:
-                bytes_data = bytes_data[:MAX_INPUT_SIZE]
-            data.append(np.frombuffer(bytes_data, dtype=np.uint8) / 255.0)
-    return torch.from_numpy(np.array(data, dtype=np.float32)) if data else torch.tensor([])
+LOG = logging.getLogger("fuzzygan.corpus")
 
-def clean_corpus_dir(corpus_dir):
+
+def load_corpus(corpus_dir: Path) -> torch.Tensor:
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+    tensors: List[np.ndarray] = []
+    for seed_file in sorted(corpus_dir.glob("*.bin")):
+        raw = seed_file.read_bytes()[:MAX_INPUT_SIZE]
+        if len(raw) < MAX_INPUT_SIZE:
+            raw += b"\x00" * (MAX_INPUT_SIZE - len(raw))
+        tensors.append(np.frombuffer(raw, dtype=np.uint8) / 255.0)
+    if not tensors:
+        return torch.empty(0)
+    return torch.from_numpy(np.stack(tensors, axis=0).astype(np.float32))
+
+
+def clean_corpus_dir(corpus_dir: Path) -> None:
     for item in corpus_dir.iterdir():
-        if item.is_file() and item.suffix != '.bin':
+        if item.is_file() and item.suffix != ".bin":
             item.unlink()
 
-def save_and_log_corpus(data, corpus_dir, epoch, prefix="seed"):
-    epoch_dir = corpus_dir / f"epoch_{epoch}"
-    epoch_dir.mkdir(exist_ok=True)
-    existing_seeds = sorted(glob.glob(str(corpus_dir / "*.bin")))
-    num_to_save = min(len(data), MAX_CORPUS_SIZE)
-    seed_indices = list(range(min(num_to_save, len(existing_seeds)))) + list(range(len(existing_seeds), min(num_to_save, MAX_CORPUS_SIZE)))
-    for i, idx in enumerate(seed_indices[:num_to_save]):
-        bytes_data = (data[i] * 255).byte().numpy()
-        seed_path = corpus_dir / f"{prefix}{idx}.bin" if idx >= len(existing_seeds) else Path(existing_seeds[idx])
-        epoch_seed_path = epoch_dir / f"{prefix}{idx}_epoch{epoch}.bin"
-        with open(epoch_seed_path, 'wb') as f:
-            f.write(bytes_data)
-        shutil.copy(epoch_seed_path, seed_path)
-    for seed_file in glob.glob(str(epoch_dir / f"{prefix}*_epoch{epoch}.bin"))[:MAX_SEEDS_TO_LOG]:
-        with open(seed_file, 'rb') as f:
-            hex_data = binascii.hexlify(f.read(MAX_BYTES_TO_LOG)).decode('ascii') + ("..." if os.path.getsize(seed_file) > MAX_BYTES_TO_LOG else "")
-            logging.info(f"Mutated seed {os.path.basename(seed_file)}: 0x{hex_data}")
-    zip_path = corpus_dir.parent / "seed_corpus.zip"
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for f in glob.glob(str(corpus_dir / "*.bin")):
-            zf.write(f, os.path.basename(f))
+
+def _log_seed_samples(samples: List[tuple]) -> None:
+    for name, content in samples[:MAX_SEEDS_TO_LOG]:
+        data = content[:MAX_BYTES_TO_LOG]
+        tail = "..." if len(content) > MAX_BYTES_TO_LOG else ""
+        LOG.info("Mutated seed %s: 0x%s%s", name, data.hex(), tail)
+def _apply_blueprint(raw: bytearray, blueprint: dict | None) -> bytes:
+    if not blueprint:
+        return bytes(raw)
+    prefix: bytes = blueprint.get("prefix", b"") or b""
+    length: int = blueprint.get("length", len(raw))
+    if length < len(raw):
+        raw = raw[:length]
+    elif length > len(raw):
+        raw.extend(b"\x00" * (length - len(raw)))
+    if raw:
+        enforce_len = len(prefix)
+        if enforce_len >= len(raw) and len(raw) > 1:
+            enforce_len = len(raw) - 1
+        enforce_len = min(enforce_len, len(raw))
+        if enforce_len > 0:
+            raw[:enforce_len] = prefix[:enforce_len]
+    if length < len(raw):
+        return bytes(raw[:length])
+    return bytes(raw)
+
+
+def save_and_log_corpus(
+    data: torch.Tensor,
+    corpus_dir: Path,
+    epoch: int,
+    prefix: str = "seed",
+    blueprint: List[dict] | None = None,
+    storage=None,
+    run_id: int | None = None,
+    function: str | None = None,
+) -> None:
+    if data.numel() == 0:
+        return
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+
+    num_samples = min(data.shape[0], MAX_CORPUS_SIZE)
+    sample_bytes: List[tuple] = []
+    for index in range(num_samples):
+        seed_name = f"{prefix}{index:04d}.bin"
+        tensor = data[index]
+        target_path = corpus_dir / seed_name
+        raw = bytearray((tensor.clamp(0.0, 1.0) * 255).to(torch.uint8).cpu().numpy().tobytes())
+        applied = _apply_blueprint(raw, blueprint[index % len(blueprint)] if blueprint else None)
+        target_path.write_bytes(applied)
+        sample_bytes.append((seed_name, applied))
+
+    for stale in sorted(corpus_dir.glob(f"{prefix}*.bin"))[num_samples:]:
+        stale.unlink()
+
+    _log_seed_samples(sample_bytes)
+
+    if storage and run_id is not None and function:
+        try:
+            archive = BytesIO()
+            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+                for name, content in sample_bytes:
+                    zf.writestr(name, content)
+            storage.record_corpus_blob(run_id, function, epoch, archive.getvalue())
+        except AttributeError:
+            pass
