@@ -4,12 +4,12 @@ import logging
 import shutil
 import time
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, List, Tuple
 
 import torch
 import torch.optim as optim
 
-from corpus_manager import MAX_INPUT_SIZE, clean_corpus_dir, load_corpus, save_and_log_corpus
+from corpus_manager import MAX_CORPUS_SIZE, MAX_INPUT_SIZE, clean_corpus_dir, load_corpus, save_and_log_corpus
 from fuzzer_runner import compute_coverage_loss, run_fuzzer
 from policy import QLearningPolicy
 from storage import open_storage
@@ -34,42 +34,62 @@ def ensure_seed_corpus(func_info: Dict, corpus_dst: Path) -> Tuple[Path, List[Di
     corpus_dst.mkdir(parents=True, exist_ok=True)
     corpus_backup = corpus_dst / "backup"
     seed_source = Path(func_info["seed_dir"])
-    seed_files = sorted(seed_source.glob("*.bin"))
-    seed_blueprint: List[Dict[str, bytes]] = []
+    corpus_root = corpus_dst.parent
+    fallback_dir = corpus_root / "seed_override"
 
-    backup_seeds: List[Path] = []
-    if corpus_backup.exists():
-        backup_seeds = list(corpus_backup.glob("*.bin"))
+    def _collect_files(directory: Path) -> List[Path]:
+        if not directory.exists():
+            return []
+        return sorted(p for p in directory.iterdir() if p.is_file())
 
-    if seed_files and not backup_seeds:
+    seed_candidates: List[Path] = []
+    for directory in (seed_source, fallback_dir):
+        if not directory or not directory.exists():
+            continue
+        files = _collect_files(directory)
+        if files:
+            seed_candidates = files
+            if directory == seed_source:
+                break
+
+    normalized_seeds: List[Tuple[str, bytes, bytes, int]] = []
+    for index, seed_path in enumerate(seed_candidates[:MAX_CORPUS_SIZE]):
+        raw = seed_path.read_bytes()
+        if not raw:
+            raw = b"\x00"
+        trimmed = raw[:MAX_INPUT_SIZE]
+        if len(trimmed) < MAX_INPUT_SIZE:
+            trimmed = trimmed + b"\x00" * (MAX_INPUT_SIZE - len(trimmed))
+        prefix = raw[:8] if raw else b"\x00"
+        length = max(1, min(len(raw), MAX_INPUT_SIZE))
+        name = seed_path.name if seed_path.suffix == ".bin" else f"seed{index:04d}.bin"
+        normalized_seeds.append((name, trimmed, prefix, length))
+
+    if not normalized_seeds:
+        logging.warning("No initial seeds found for %s, creating default seed", func_info.get("name", "unknown"))
+        raw = b"\x00"
+        padded = raw + b"\x00" * (MAX_INPUT_SIZE - len(raw))
+        normalized_seeds.append(("seed0000.bin", padded, raw, 1))
+
+    seed_blueprint: List[Dict[str, bytes]] = [
+        {"length": length, "prefix": prefix} for _, _, prefix, length in normalized_seeds
+    ]
+
+    backup_seeds = list(corpus_backup.glob("*.bin")) if corpus_backup.exists() else []
+    if not backup_seeds:
         corpus_backup.mkdir(parents=True, exist_ok=True)
-        for seed in seed_files:
-            target = corpus_backup / seed.name
-            data = seed.read_bytes()
-            if len(data) < MAX_INPUT_SIZE:
-                data = data + b"\x00" * (MAX_INPUT_SIZE - len(data))
-            target.write_bytes(data)
+        for name, data, _, _ in normalized_seeds:
+            (corpus_backup / name).write_bytes(data)
         backup_seeds = list(corpus_backup.glob("*.bin"))
         logging.info("Created corpus backup at %s", corpus_backup)
 
-    if seed_files:
-        for seed in seed_files:
-            data = seed.read_bytes()
-            prefix = data[:8] if len(data) >= 8 else data
-            seed_blueprint.append({"length": MAX_INPUT_SIZE, "prefix": prefix})
-
     if not any(corpus_dst.glob("*.bin")):
-        source_dirs: Iterable[Path] = []
         if backup_seeds:
-            source_dirs = backup_seeds
-        elif seed_files:
-            source_dirs = list(seed_files)
-        for seed in source_dirs:
-            target = corpus_dst / Path(seed).name
-            data = Path(seed).read_bytes()
-            if len(data) < MAX_INPUT_SIZE:
-                data = data + b"\x00" * (MAX_INPUT_SIZE - len(data))
-            target.write_bytes(data)
+            for seed in backup_seeds:
+                shutil.copy2(seed, corpus_dst / seed.name)
+        else:
+            for name, data, _, _ in normalized_seeds:
+                (corpus_dst / name).write_bytes(data)
 
     for seed in corpus_dst.glob("*.bin"):
         data = seed.read_bytes()

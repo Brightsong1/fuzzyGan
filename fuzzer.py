@@ -102,22 +102,87 @@ def load_analysis_summary(out_dir: Path, library_name: str) -> dict:
 def compile_fuzzer(
     harness_path: Path,
     binary_path: Path,
-    include_dir: Path,
+    project_dir: Path,
     library_out_dir: Path,
     library_name: str,
+    oss_fuzz_dir: Path,
 ) -> None:
+    source_dir = harness_path.parent
+    include_candidates = [
+        project_dir,
+        project_dir / "include",
+        source_dir,
+        source_dir / "include",
+        oss_fuzz_dir / "build" / "src" / library_name,
+        oss_fuzz_dir / "build" / "src" / library_name / "include",
+        library_out_dir / "include",
+    ]
+    include_flags: List[str] = []
+    seen_includes = set()
+    for candidate in include_candidates:
+        if candidate.is_dir() and candidate not in seen_includes:
+            include_flags.extend(["-I", str(candidate)])
+            seen_includes.add(candidate)
+
+    lib_dirs = [library_out_dir, oss_fuzz_dir / "build" / "src" / library_name]
+    static_libs = []
+    shared_libs = []
+    seen_libs = set()
+    for lib_dir in lib_dirs:
+        if not lib_dir.is_dir():
+            continue
+        for path in lib_dir.glob("lib*"):
+            if path.suffix == ".a":
+                if path not in seen_libs:
+                    static_libs.append(path)
+                    seen_libs.add(path)
+            elif path.suffix in {".so", ".dylib"}:
+                if path not in seen_libs:
+                    shared_libs.append(path)
+                    seen_libs.add(path)
+    # Preserve linking order: place common dependencies like libcrypto last.
+    def sort_key(path: Path) -> tuple[int, str]:
+        name = path.stem.removeprefix("lib")
+        if name == "crypto":
+            return (2, name)
+        if name == "ssl":
+            return (1, name)
+        return (0, name)
+
+    static_libs = sorted(static_libs, key=sort_key)
+    shared_flags: List[str] = []
+    for shared in shared_libs:
+        lib_name = shared.stem.removeprefix("lib")
+        shared_flags.extend(["-l", lib_name])
+
+    extra_sources = []
+    driver = source_dir / "driver.c"
+    fuzz_rand = source_dir / "fuzz_rand.c"
+    if driver.exists():
+        extra_sources.append(driver)
+    if fuzz_rand.exists():
+        extra_sources.append(fuzz_rand)
+
     cmd = [
         "clang",
         "-fsanitize=fuzzer,address",
-        "-I",
-        str(include_dir),
-        "-L",
-        str(library_out_dir),
-        f"-l{library_name}",
-        str(harness_path),
-        "-o",
-        str(binary_path),
+        *include_flags,
     ]
+    for lib_dir in lib_dirs:
+        if lib_dir.is_dir():
+            cmd.extend(["-L", str(lib_dir)])
+    cmd.extend(
+        [
+            str(harness_path),
+            *[str(src) for src in extra_sources],
+            *[str(lib) for lib in static_libs],
+            *shared_flags,
+            "-lpthread",
+            "-ldl",
+            "-o",
+            str(binary_path),
+        ]
+    )
     run_cmd(cmd)
 
 
@@ -138,7 +203,14 @@ def run_fuzzing(out_dir: Path, library_name: str, oss_fuzz_dir: Path, storage, r
         compile_attempts = 3
         for attempt in range(compile_attempts):
             try:
-                compile_fuzzer(harness_path, binary_path, project_dir, library_out_dir, library_name)
+                compile_fuzzer(
+                    harness_path,
+                    binary_path,
+                    project_dir,
+                    library_out_dir,
+                    library_name,
+                    oss_fuzz_dir,
+                )
                 storage.record_event(run_id, "compile_success", f"{func['name']} attempt {attempt + 1}")
                 break
             except subprocess.CalledProcessError:
