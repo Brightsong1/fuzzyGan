@@ -1,8 +1,7 @@
 # Запуск фаззинга OpenSSL
 
 ## 1. Требования
-- Linux, Bash, Python 3.9+ (+ Pytorch)
-- Docker (для сборки через OSS-Fuzz)
+- Linux, Python 3.9+ (+ Pytorch)
 
 ## 2. Клонирование и инициализация форка oss-fuzz
 ```bash
