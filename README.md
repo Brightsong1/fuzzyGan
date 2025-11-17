@@ -6,7 +6,6 @@
 
 ## 2. Клонирование и инициализация форка oss-fuzz
 ```bash
-git clone https://example.com/your/fuzzygan.git
 cd fuzzygan
 git submodule update --init --recursive
 ```
@@ -16,7 +15,7 @@ git submodule update --init --recursive
 ```bash
 tar -xzf oss-fuzz/projects/openssl/openssl-support.tar.gz -C .
 ```
-После распаковки убедитесь, что появился файл `fuzz_out` 
+После распаковки убедитесь, что появилась папка `fuzz_out` в корне
 
 ## 4. Подготовка OSS-Fuzz окружения
 ```bash
