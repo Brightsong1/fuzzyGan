@@ -1,4 +1,4 @@
-/fuzz_out/
+#/fuzz_out/
 .venv/
 toolchains
 __pycache__

@@ -1,0 +1,2 @@
+r0 = msgget(IPC_PRIVATE, IPC_CREAT|0600)
+msgctl$IPC_RMID(r0, IPC_RMID, 0)

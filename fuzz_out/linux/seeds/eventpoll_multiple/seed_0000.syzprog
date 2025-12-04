@@ -1,0 +1,6 @@
+r0 = epoll_create1(0)
+r1 = pipe(&(pipefd){})
+epoll_ctl(r0, EPOLL_CTL_ADD, r1[0], &(epoll_event){.events=EPOLLIN})
+close(r1[0])
+close(r1[1])
+close(r0)

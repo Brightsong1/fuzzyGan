@@ -1,0 +1,4 @@
+r0 = socket$inet(2, SOCK_DGRAM, 0)
+bind$inet(r0, &(sockaddr_in){.family=AF_INET, .port=0x5555, .addr=0x7f000001})
+recvmmsg(r0, &(mmsghdr){{.msg_hdr={.msg_iov=&(iovec){.base=0x7f000000a100, .len=0x10}, .msg_iovlen=1}}}, 1, 0, 0)
+close(r0)

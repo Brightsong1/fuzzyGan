@@ -1,0 +1,2 @@
+pid = getpid()
+kcmp(pid, pid, KCMP_VM, 0, 0)

@@ -1,0 +1,4 @@
+r0 = socket$netlink(16, SOCK_RAW, NETLINK_ROUTE)
+sendto$netlink(r0, &(nlmsghdr){.len=0x10, .type=RTM_GETLINK, .flags=NLM_F_REQUEST|NLM_F_DUMP}, 0x10, 0, 0, 0)
+recvfrom(r0, &(0x7f0000001000)={}, 0x4000, 0, 0, 0)
+close(r0)

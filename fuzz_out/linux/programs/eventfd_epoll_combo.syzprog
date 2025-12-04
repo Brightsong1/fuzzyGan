@@ -1,0 +1,8 @@
+r0 = eventfd2(0, EFD_NONBLOCK)
+r1 = epoll_create1(0)
+epoll_ctl(r1, EPOLL_CTL_ADD, r0, &(epoll_event){.events=EPOLLIN|EPOLLET})
+epoll_wait(r1, &(epoll_event){}, 1, 10)
+write(r0, &(0x7f0000007c00)=@u64=1, 8)
+epoll_wait(r1, &(epoll_event){}, 1, 10)
+close(r0)
+close(r1)

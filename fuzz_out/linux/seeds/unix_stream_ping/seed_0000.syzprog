@@ -1,0 +1,7 @@
+r0 = socket$unix(1, SOCK_STREAM, 0)
+bind$unix(r0, &(sockaddr_un){.family=AF_UNIX, .path="seedunix1"})
+listen(r0, 1)
+r1 = socket$unix(1, SOCK_STREAM, 0)
+connect$unix(r1, &(sockaddr_un){.family=AF_UNIX, .path="seedunix1"})
+close(r1)
+close(r0)

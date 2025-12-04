@@ -1,0 +1,4 @@
+r0 = mmap(0, 0x1000, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0)
+futex(r0, FUTEX_WAKE, 1, 0, 0, 0)
+futex(r0, FUTEX_WAIT, 0, 0, 0, 0)
+munmap(r0, 0x1000)

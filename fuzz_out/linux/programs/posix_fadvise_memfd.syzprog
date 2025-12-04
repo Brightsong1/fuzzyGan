@@ -1,0 +1,4 @@
+r0 = memfd_create(&(filename){.p="syzfadvise"}, 0)
+write(r0, &(0x7f0000007f80)="0011223344556677", 8)
+posix_fadvise(r0, 0, 8, POSIX_FADV_RANDOM)
+close(r0)

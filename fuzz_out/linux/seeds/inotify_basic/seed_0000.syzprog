@@ -1,0 +1,3 @@
+r0 = inotify_init1(0)
+inotify_add_watch(r0, &(filename){.p="/tmp/syzinot1"}, IN_ATTRIB)
+close(r0)

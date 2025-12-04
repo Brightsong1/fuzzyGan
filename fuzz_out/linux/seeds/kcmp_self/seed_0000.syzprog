@@ -1,0 +1,1 @@
+kcmp(getpid(), getpid(), KCMP_VM, 0, 0)

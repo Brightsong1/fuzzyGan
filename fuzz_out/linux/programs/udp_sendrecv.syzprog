@@ -1,0 +1,5 @@
+r0 = socket$inet(2, SOCK_DGRAM, 0)
+bind$inet(r0, &(sockaddr_in){.family=AF_INET, .port=0x5353, .addr=0x7f000001})
+sendto$inet(r0, &(0x7f0000004000)="01020304", 4, 0, &(sockaddr_in){.family=AF_INET, .port=0x5353, .addr=0x7f000001}, 0x10)
+recvfrom(r0, &(0x7f0000005000)={}, 0x100, 0, 0, 0)
+close(r0)

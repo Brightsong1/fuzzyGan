@@ -1,0 +1,4 @@
+r0 = timerfd_create(CLOCK_REALTIME, 0)
+timerfd_settime(r0, 0, &(itimerspec){{1, 0}, {0, 5000000}}, 0)
+poll(&(pollfd){.fd=r0, .events=POLLIN|POLLRDHUP}, 1, 5)
+close(r0)

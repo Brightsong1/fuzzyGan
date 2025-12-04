@@ -1,0 +1,7 @@
+r0 = pipe(&(0x7f0000000000)={0x0, 0x0})
+r1 = eventfd2(0, 0)
+r2 = io_uring_setup(0x20, &(io_uring_params){})
+io_uring_enter(r2, 0, 0, IORING_ENTER_GETEVENTS, 0, 0)
+close(r1)
+close(r2)
+close(r0)

@@ -1,0 +1,8 @@
+r0 = epoll_create1(0)
+r1 = pipe(&(pipefd){})
+epoll_ctl(r0, EPOLL_CTL_ADD, r1[0], &(epoll_event){.events=EPOLLIN})
+write(r1[1], &(0x7f0000008100)="dd", 2)
+epoll_wait(r0, &(epoll_event){}, 1, 5)
+close(r1[0])
+close(r1[1])
+close(r0)

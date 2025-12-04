@@ -1,0 +1,6 @@
+r0 = inotify_init1(0)
+inotify_add_watch(r0, &(filename){.p="/tmp/syzinotify0"}, IN_ALL_EVENTS)
+fd = openat$dir(0xffffff9c, &(filename){.p="/tmp/syzinotify0"}, O_CREAT|O_RDWR, 0)
+write(fd, &(0x7f0000007000)="4142", 2)
+close(fd)
+close(r0)

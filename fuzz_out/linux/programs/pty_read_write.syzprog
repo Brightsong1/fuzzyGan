@@ -1,0 +1,5 @@
+r0 = open$ptmx()
+ioctl$TCGETS(r0, &(termios){})
+write(r0, &(0x7f0000007700)="6162", 2)
+read(r0, &(0x7f0000007800)={}, 0x40)
+close(r0)

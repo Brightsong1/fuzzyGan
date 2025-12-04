@@ -1,0 +1,2 @@
+r0 = shmget(IPC_PRIVATE, 0x100, IPC_CREAT|0600)
+shmctl$IPC_RMID(r0, IPC_RMID, 0)

@@ -1,0 +1,5 @@
+r0 = eventfd2(1, 0)
+r1 = epoll_create1(0)
+epoll_ctl(r1, EPOLL_CTL_ADD, r0, &(epoll_event){.events=EPOLLIN})
+close(r0)
+close(r1)

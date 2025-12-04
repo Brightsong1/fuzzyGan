@@ -1,0 +1,5 @@
+r0 = eventfd2(0, 0)
+r1 = io_uring_setup(0x10, &(io_uring_params){})
+io_uring_enter(r1, 0, 0, 0, 0, 0)
+close(r0)
+close(r1)

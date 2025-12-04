@@ -1,0 +1,4 @@
+fd = openat$dir(AT_FDCWD, &(filename){.p="/tmp/syzfile1"}, O_CREAT|O_RDWR, 0x1ff)
+fchmod(fd, 0644)
+write(fd, &(0x7f0000007b00)="aa", 2)
+close(fd)

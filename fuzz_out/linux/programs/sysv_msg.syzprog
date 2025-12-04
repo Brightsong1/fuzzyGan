@@ -1,0 +1,4 @@
+r0 = msgget(IPC_PRIVATE, IPC_CREAT|0600)
+msgsnd(r0, &(msgbuf){.mtype=1, .mtext="abcd"}, 4, 0)
+msgrcv(r0, &(msgbuf){}, 16, 0, IPC_NOWAIT)
+msgctl$IPC_RMID(r0, IPC_RMID, 0)

@@ -1,0 +1,4 @@
+r0 = memfd_create(&(filename){.p="syzmemfd0"}, 0)
+fcntl$add_seals(r0, F_ADD_SEALS, F_SEAL_WRITE|F_SEAL_SHRINK|F_SEAL_GROW)
+write(r0, &(0x7f0000007400)="00112233", 4)
+close(r0)

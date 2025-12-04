@@ -1,0 +1,2 @@
+timer_create(CLOCK_REALTIME, &(sigevent){.sigev_signo=SIGALRM, .sigev_notify=SIGEV_SIGNAL}, 0x0)
+timer_settime(0, 0, &(itimerspec){{0, 1000000}, {0, 1000000}}, 0)

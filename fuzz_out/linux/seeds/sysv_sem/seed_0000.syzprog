@@ -1,0 +1,2 @@
+r0 = semget(IPC_PRIVATE, 1, IPC_CREAT|0600)
+semctl$IPC_RMID(r0, 0, IPC_RMID)

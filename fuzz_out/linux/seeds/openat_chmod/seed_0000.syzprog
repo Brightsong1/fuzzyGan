@@ -1,0 +1,2 @@
+fd = openat$dir(AT_FDCWD, &(filename){.p="/tmp/seedfile1"}, O_CREAT|O_RDWR, 0x1ff)
+close(fd)

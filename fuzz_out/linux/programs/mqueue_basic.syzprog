@@ -1,0 +1,4 @@
+mq = mq_open(&(filename){.p="/mq0"}, O_CREAT|O_RDWR, 0x1ff, &(mq_attr){.mq_maxmsg=4, .mq_msgsize=64})
+mq_send(mq, &(0x7f0000007100)="01020304", 4, 0)
+mq_receive(mq, &(0x7f0000007200)={}, 64, 0)
+mq_close(mq)

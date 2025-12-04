@@ -1,0 +1,3 @@
+r0 = signalfd4(-1, &(sigset){.set={[0]=1<<SIGTERM}}, 8, 0)
+dup(r0)
+close(r0)

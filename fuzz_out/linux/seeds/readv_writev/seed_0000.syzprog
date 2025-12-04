@@ -1,0 +1,3 @@
+r0 = memfd_create(&(filename){.p="seediov"}, 0)
+writev(r0, &(iovec){{.base="aa", .len=2}}, 1)
+close(r0)

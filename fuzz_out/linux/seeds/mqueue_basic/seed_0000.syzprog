@@ -1,0 +1,2 @@
+mq = mq_open(&(filename){.p="/mq1"}, O_CREAT|O_RDWR, 0x1ff, &(mq_attr){.mq_maxmsg=2, .mq_msgsize=16})
+mq_close(mq)

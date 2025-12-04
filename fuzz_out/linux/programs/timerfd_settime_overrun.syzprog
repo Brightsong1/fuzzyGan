@@ -1,0 +1,5 @@
+r0 = timerfd_create(CLOCK_MONOTONIC, 0)
+timerfd_settime(r0, 0, &(itimerspec){{0, 0}, {0, 500000}}, 0)
+read(r0, &(0x7f0000008080)=@u64=0, 8)
+timerfd_settime(r0, 0, &(itimerspec){{0, 0}, {0, 200000}}, 0)
+close(r0)

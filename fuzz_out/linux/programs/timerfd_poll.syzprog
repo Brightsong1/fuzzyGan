@@ -1,0 +1,5 @@
+r0 = timerfd_create(CLOCK_MONOTONIC, 0)
+timerfd_settime(r0, 0, &(itimerspec){{0, 1000000}, {0, 1000000}}, 0)
+poll(&(pollfd){.fd=r0, .events=POLLIN}, 1, 10)
+read(r0, &(0x7f0000002000)=@u64=0, 8)
+close(r0)

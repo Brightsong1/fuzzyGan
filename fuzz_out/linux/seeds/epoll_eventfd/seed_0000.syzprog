@@ -1,0 +1,6 @@
+r0 = epoll_create1(0)
+r1 = eventfd2(1, EFD_SEMAPHORE)
+epoll_ctl(r0, 1, r1, &(epoll_event){.events=EPOLLIN|EPOLLET})
+epoll_wait(r0, &(epoll_event){}, 1, 0)
+close(r1)
+close(r0)

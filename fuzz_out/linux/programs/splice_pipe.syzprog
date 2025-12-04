@@ -1,0 +1,7 @@
+r0 = pipe(&(pipefd){})
+write(r0[1], &(0x7f0000007500)="41414141", 4)
+r1 = memfd_create(&(filename){.p="syzbuf"}, 0)
+splice(r0[0], 0, r1, 0, 4, 0)
+close(r1)
+close(r0[0])
+close(r0[1])

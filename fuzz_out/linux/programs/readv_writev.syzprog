@@ -1,0 +1,4 @@
+r0 = memfd_create(&(filename){.p="syziov"}, 0)
+writev(r0, &(iovec){{.base="aa", .len=2}, {.base="bb", .len=2}}, 2)
+readv(r0, &(iovec){{.base=0x7f0000008180, .len=4}}, 1)
+close(r0)

@@ -1,0 +1,8 @@
+r0 = socket$inet(2, SOCK_STREAM, 0)
+bind$inet(r0, &(sockaddr_in){.family=AF_INET, .port=0x4242, .addr=0x7f000001})
+listen(r0, 1)
+r1 = socket$inet(2, SOCK_STREAM, 0)
+connect$inet(r1, &(sockaddr_in){.family=AF_INET, .port=0x4242, .addr=0x7f000001}, 0x10)
+accept4(r0, 0, 0, 0)
+close(r1)
+close(r0)

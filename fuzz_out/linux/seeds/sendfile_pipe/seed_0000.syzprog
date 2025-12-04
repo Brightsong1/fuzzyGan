@@ -1,0 +1,6 @@
+r0 = pipe(&(pipefd){})
+r1 = memfd_create(&(filename){.p="seedsf"}, 0)
+sendfile(r0[1], r1, 0, 0)
+close(r1)
+close(r0[0])
+close(r0[1])
