@@ -1,326 +1,165 @@
 import argparse
 import json
 import logging
-import os
-import shutil
-import subprocess
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Dict
 
-from introspector_adapter import collect_summary, ensure_python_path
+from preanalyze import analyze_kernel
 from storage import open_storage
+from syzkaller_adapter import (
+    corpus_root,
+    load_manager_config,
+    stage_corpus,
+    summarize_feedback,
+    workdir_from_config,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 LOG = logging.getLogger("fuzzygan.fuzzer")
 
 
-@dataclass
-class LibraryConfig:
-    name: str
-    header_paths: List[Path]
-    src_dir: Path
-    exclude_prefixes: List[str]
-    skip_functions: List[str]
-
-    @classmethod
-    def from_args(cls, args: argparse.Namespace, oss_fuzz_dir: Path) -> "LibraryConfig":
-        header_paths = [Path(p).expanduser() for p in (args.header_paths or "").split(",") if p]
-        return cls(
-            name=args.library,
-            header_paths=header_paths,
-            src_dir=oss_fuzz_dir / "projects" / args.library,
-            exclude_prefixes=[p.strip() for p in (args.exclude_prefixes or "").split(",") if p.strip()],
-            skip_functions=[p.strip() for p in (args.skip_functions or "").split(",") if p.strip()],
-        )
-
-
-def run_cmd(cmd: Iterable[object], *, cwd: Optional[Path] = None, env: Optional[dict] = None, timeout: int = 300) -> str:
-    cmd_list = [str(c) for c in cmd]
-    display = " ".join(cmd_list)
-    try:
-        result = subprocess.run(cmd_list, check=True, text=True, capture_output=True, cwd=cwd, env=env, timeout=timeout)
-        if result.stdout:
-            LOG.debug(result.stdout)
-        if result.stderr:
-            LOG.debug(result.stderr)
-        return result.stdout
-    except subprocess.CalledProcessError as error:
-        LOG.error("Command failed: %s", display)
-        if error.stdout:
-            LOG.error("stdout:\n%s", error.stdout)
-        if error.stderr:
-            LOG.error("stderr:\n%s", error.stderr)
-        raise
-
-
-def get_build_out_dir(oss_fuzz_dir: Path, library_name: str) -> Path:
-    return oss_fuzz_dir / "build" / "out" / library_name
-
-
-def ensure_build_dirs(out_dir: Path, library_out_dir: Path) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    library_out_dir.mkdir(parents=True, exist_ok=True)
-
-
-def setup_oss_fuzz(oss_fuzz_dir: Path) -> None:
-    sentinel = oss_fuzz_dir / ".fuzzygan_setup"
-    if sentinel.exists():
-        return
-    scripts_dir = oss_fuzz_dir / "infra"
-    build_root = oss_fuzz_dir / "build"
-    for subdir in ("out", "work", "logs", "temp"):
-        (build_root / subdir).mkdir(parents=True, exist_ok=True)
-    python = shutil.which("python3") or shutil.which("python")
-    if not python:
-        raise RuntimeError("Python interpreter not found for OSS-Fuzz setup")
-    requirements = scripts_dir / "cifuzz" / "requirements.txt"
-    if requirements.exists():
-        run_cmd([python, "-m", "pip", "install", "-r", requirements])
-    sentinel.write_text("initialized\n", encoding="utf-8")
-
-
-def build_library(oss_fuzz_dir: Path, library_name: str) -> None:
-    project_dir = oss_fuzz_dir / "projects" / library_name
-    build_script = project_dir / "build.sh"
-    if not build_script.exists():
-        raise FileNotFoundError(f"build.sh not found for {library_name} in {project_dir}")
-    build_script.chmod(build_script.stat().st_mode | 0o111)
-    env = os.environ.copy()
-    env["OUT"] = str(get_build_out_dir(oss_fuzz_dir, library_name))
-    run_cmd(["bash", build_script], cwd=project_dir, env=env)
-
-
-def load_analysis_summary(out_dir: Path, library_name: str) -> dict:
-    summary_path = out_dir / library_name / "analysis_summary.json"
-    if not summary_path.exists():
-        raise FileNotFoundError(f"analysis_summary.json not found for {library_name}")
-    with summary_path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def compile_fuzzer(
-    harness_path: Path,
-    binary_path: Path,
-    project_dir: Path,
-    library_out_dir: Path,
-    library_name: str,
-    oss_fuzz_dir: Path,
-) -> None:
-    source_dir = harness_path.parent
-    include_candidates = [
-        project_dir,
-        project_dir / "include",
-        source_dir,
-        source_dir / "include",
-        oss_fuzz_dir / "build" / "src" / library_name,
-        oss_fuzz_dir / "build" / "src" / library_name / "include",
-        library_out_dir / "include",
-    ]
-    include_flags: List[str] = []
-    seen_includes = set()
-    for candidate in include_candidates:
-        if candidate.is_dir() and candidate not in seen_includes:
-            include_flags.extend(["-I", str(candidate)])
-            seen_includes.add(candidate)
-
-    lib_dirs = [library_out_dir, oss_fuzz_dir / "build" / "src" / library_name]
-    static_libs = []
-    shared_libs = []
-    seen_libs = set()
-    for lib_dir in lib_dirs:
-        if not lib_dir.is_dir():
-            continue
-        for path in lib_dir.glob("lib*"):
-            if path.suffix == ".a":
-                if path not in seen_libs:
-                    static_libs.append(path)
-                    seen_libs.add(path)
-            elif path.suffix in {".so", ".dylib"}:
-                if path not in seen_libs:
-                    shared_libs.append(path)
-                    seen_libs.add(path)
-    # Preserve linking order: place common dependencies like libcrypto last.
-    def sort_key(path: Path) -> tuple[int, str]:
-        name = path.stem.removeprefix("lib")
-        if name == "crypto":
-            return (2, name)
-        if name == "ssl":
-            return (1, name)
-        return (0, name)
-
-    static_libs = sorted(static_libs, key=sort_key)
-    shared_flags: List[str] = []
-    for shared in shared_libs:
-        lib_name = shared.stem.removeprefix("lib")
-        shared_flags.extend(["-l", lib_name])
-
-    extra_sources = []
-    driver = source_dir / "driver.c"
-    fuzz_rand = source_dir / "fuzz_rand.c"
-    if driver.exists():
-        extra_sources.append(driver)
-    if fuzz_rand.exists():
-        extra_sources.append(fuzz_rand)
-
-    cmd = [
-        "clang",
-        "-fsanitize=fuzzer,address",
-        *include_flags,
-    ]
-    for lib_dir in lib_dirs:
-        if lib_dir.is_dir():
-            cmd.extend(["-L", str(lib_dir)])
-    cmd.extend(
-        [
-            str(harness_path),
-            *[str(src) for src in extra_sources],
-            *[str(lib) for lib in static_libs],
-            *shared_flags,
-            "-lpthread",
-            "-ldl",
-            "-o",
-            str(binary_path),
-        ]
-    )
-    run_cmd(cmd)
-
-
-def run_fuzzing(out_dir: Path, library_name: str, oss_fuzz_dir: Path, storage, run_id: int) -> None:
-    summary = load_analysis_summary(out_dir, library_name)
-    project_dir = oss_fuzz_dir / "projects" / library_name
-    library_out_dir = get_build_out_dir(oss_fuzz_dir, library_name)
-    ensure_build_dirs(out_dir / library_name, library_out_dir)
-
-    introspector_candidates = [out_dir / library_name / "introspector"]
-
-    fuzzed_any = False
-    for func in summary.get("functions", []):
-        if not func.get("worth_fuzzing") or not func.get("harness_path") or not func.get("seed_dir"):
-            continue
-        harness_path = Path(func["harness_path"])
-        binary_path = library_out_dir / f"{func['name']}_fuzzer"
-        compile_attempts = 3
-        for attempt in range(compile_attempts):
-            try:
-                compile_fuzzer(
-                    harness_path,
-                    binary_path,
-                    project_dir,
-                    library_out_dir,
-                    library_name,
-                    oss_fuzz_dir,
-                )
-                storage.record_event(run_id, "compile_success", f"{func['name']} attempt {attempt + 1}")
-                break
-            except subprocess.CalledProcessError:
-                if attempt == compile_attempts - 1:
-                    LOG.error("Failed to compile %s after %s attempts", func["name"], compile_attempts)
-                    binary_path = None
-                    storage.record_event(run_id, "compile_failed", func["name"])
-                else:
-                    LOG.info("Retrying compilation for %s", func["name"])
-                    storage.record_event(run_id, "compile_retry", f"{func['name']} attempt {attempt + 1}")
-        if not binary_path or not binary_path.exists():
-            continue
-        corpus_dir = Path(func["seed_dir"])
-        run_cmd([binary_path, corpus_dir], timeout=300)
-        storage.record_event(run_id, "fuzz_invocation", f"{func['name']} with corpus {corpus_dir}")
-        fuzzed_any = True
-
-    if fuzzed_any:
-        summary_data = collect_summary(library_name, oss_fuzz_dir, extras=introspector_candidates)
-        if summary_data:
-            storage.record_event(run_id, "introspector_summary", json.dumps(summary_data))
-
-
-def list_libraries(oss_fuzz_dir: Path) -> List[str]:
-    projects_dir = oss_fuzz_dir / "projects"
-    if not projects_dir.exists():
-        LOG.error("OSS-Fuzz projects directory not found: %s", projects_dir)
-        return []
-    return sorted(d.name for d in projects_dir.iterdir() if d.is_dir() and (d / "build.sh").exists())
-
-
-def list_analyzed(out_dir: Path) -> List[str]:
-    if not out_dir.exists():
-        return []
-    return sorted(d.name for d in out_dir.iterdir() if (d / "analysis_summary.json").exists())
-
-
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="FuzzyGan CLI")
-    parser.add_argument("command", choices=["analyze", "fuzz", "list-libraries", "list-analyzed"])
-    parser.add_argument("--library")
-    parser.add_argument("--header-paths")
-    parser.add_argument("--exclude-prefixes")
-    parser.add_argument("--skip-functions")
-    parser.add_argument("--out-dir", default="fuzz_out")
-    parser.add_argument("--oss-fuzz-dir", required=True)
-    parser.add_argument("--db-path", default="fuzz_out/fuzzygan.db")
+    parser = argparse.ArgumentParser(description="FuzzyGan syzkaller pipeline")
+    parser.add_argument("command", choices=["analyze", "stage-corpus", "collect-stats", "one-shot"])
+    parser.add_argument("--kernel-name", help="Kernel identifier (e.g., linux)")
+    parser.add_argument("--kernel-src", help="Path to kernel source tree")
+    parser.add_argument("--focus-dirs", help="Comma-separated subpaths to analyze (e.g., drivers/net,fs)")
+    parser.add_argument("--max-files", type=int, default=12, help="Max files per target slice")
+    parser.add_argument("--max-bytes", type=int, default=16000, help="Max bytes per target slice")
+    parser.add_argument("--out-dir", default="fuzz_out", help="Output directory for analysis artifacts")
+    parser.add_argument("--db-path", default="fuzz_out/fuzzygan.db", help="SQLite database path")
+    parser.add_argument("--manager-cfg", help="Path to syzkaller manager.cfg")
+    parser.add_argument("--programs-dir", help="Override programs directory (defaults to fuzz_out/<kernel>/programs)")
+    parser.add_argument("--fuzzer-prefix", default="fuzzer-0", help="Corpus destination under workdir/corpus/")
+    parser.add_argument("--stats-file", help="Path to syzkaller fuzzer.stats (defaults to workdir/fuzzer.stats)")
+    parser.add_argument("--crash-dir", help="Path to syzkaller crashes directory (defaults to workdir/crashes)")
     return parser.parse_args()
+
+
+def run_analyze(args: argparse.Namespace) -> None:
+    if not args.kernel_name or not args.kernel_src:
+        raise SystemExit("--kernel-name and --kernel-src are required for analyze")
+    focus_dirs = [p.strip() for p in (args.focus_dirs or "").split(",") if p.strip()]
+    storage = open_storage(Path(args.db_path).expanduser())
+    run_id = storage.start_run(
+        "preanalyze",
+        args.kernel_name,
+        metadata={"out_dir": args.out_dir, "kernel_src": args.kernel_src, "focus_dirs": focus_dirs},
+    )
+    try:
+        kernel_config: Dict = {
+            "name": args.kernel_name,
+            "kernel_src": args.kernel_src,
+            "focus_dirs": focus_dirs,
+            "max_files": args.max_files,
+            "max_bytes": args.max_bytes,
+        }
+        analyze_kernel(kernel_config, args.out_dir, storage=storage, run_id=run_id)
+        storage.finish_run(run_id, "completed")
+    except Exception as exc:  
+        storage.finish_run(run_id, "failed", {"error": str(exc)})
+        storage.close()
+        raise
+    storage.close()
+
+
+def run_stage_corpus(args: argparse.Namespace) -> None:
+    if not args.kernel_name:
+        raise SystemExit("--kernel-name is required for stage-corpus")
+    if not args.manager_cfg:
+        raise SystemExit("--manager-cfg is required for stage-corpus")
+    cfg = load_manager_config(Path(args.manager_cfg))
+    programs_dir = (
+        Path(args.programs_dir).expanduser()
+        if args.programs_dir
+        else Path(args.out_dir) / args.kernel_name / "programs"
+    )
+    seeds_root = Path(args.out_dir) / args.kernel_name / "seeds"
+    seed_dirs = list(seeds_root.iterdir()) if seeds_root.exists() else []
+    sources = [programs_dir] + seed_dirs
+    staged = stage_corpus(sources, cfg, fuzzer_prefix=args.fuzzer_prefix)
+    LOG.info("Staged programs: %s", ", ".join(str(p) for p in staged))
+
+
+def run_collect_stats(args: argparse.Namespace) -> None:
+    if not args.manager_cfg:
+        raise SystemExit("--manager-cfg is required for collect-stats")
+    cfg = load_manager_config(Path(args.manager_cfg))
+    workdir = workdir_from_config(cfg)
+    stats_path = Path(args.stats_file).expanduser() if args.stats_file else workdir / "fuzzer.stats"
+    crash_dir = Path(args.crash_dir).expanduser() if args.crash_dir else workdir / "crashes"
+    covered_edges, covered_syscalls, raw = summarize_feedback(stats_path, crash_dir)
+    summary = {
+        "workdir": str(workdir),
+        "stats_file": str(stats_path),
+        "covered_edges": covered_edges,
+        "covered_syscalls": covered_syscalls,
+        "crash_count": raw.get("crash_count", 0),
+        "crash_dirs": raw.get("crash_dirs", []),
+        "raw": raw,
+    }
+    print(json.dumps(summary, indent=2))
+
+
+def run_one_shot(args: argparse.Namespace) -> None:
+    if not args.kernel_name:
+        raise SystemExit("--kernel-name is required for one-shot")
+    if not args.manager_cfg:
+        raise SystemExit("--manager-cfg is required for one-shot")
+
+    programs_dir = (
+        Path(args.programs_dir).expanduser()
+        if args.programs_dir
+        else Path(args.out_dir) / args.kernel_name / "programs"
+    )
+
+    # If prebuilt programs exist, skip LLM preanalysis.
+    has_prebuilt = programs_dir.exists() and any(programs_dir.iterdir())
+    if not has_prebuilt:
+        if not args.kernel_src:
+            raise SystemExit("--kernel-src is required when no prebuilt programs are present")
+        focus_dirs = [p.strip() for p in (args.focus_dirs or "").split(",") if p.strip()]
+        storage = open_storage(Path(args.db_path).expanduser())
+        run_id = storage.start_run(
+            "preanalyze",
+            args.kernel_name,
+            metadata={"out_dir": args.out_dir, "kernel_src": args.kernel_src, "focus_dirs": focus_dirs},
+        )
+        try:
+            kernel_config: Dict = {
+                "name": args.kernel_name,
+                "kernel_src": args.kernel_src,
+                "focus_dirs": focus_dirs,
+                "max_files": args.max_files,
+                "max_bytes": args.max_bytes,
+            }
+            analyze_kernel(kernel_config, args.out_dir, storage=storage, run_id=run_id)
+            storage.finish_run(run_id, "completed")
+        except Exception as exc:  # noqa: BLE001
+            storage.finish_run(run_id, "failed", {"error": str(exc)})
+            storage.close()
+            raise
+        storage.close()
+
+    cfg = load_manager_config(Path(args.manager_cfg))
+    seeds_root = Path(args.out_dir) / args.kernel_name / "seeds"
+    seed_dirs = list(seeds_root.iterdir()) if seeds_root.exists() else []
+    sources = [programs_dir] + seed_dirs
+    staged = stage_corpus(sources, cfg, fuzzer_prefix=args.fuzzer_prefix)
+    LOG.info("One-shot staged %d files into %s/corpus/%s", len(staged), corpus_root(cfg), args.fuzzer_prefix)
+    LOG.info("Start syzkaller with: ./bin/syz-manager -config %s", args.manager_cfg)
 
 
 def main() -> None:
     args = parse_args()
-    oss_fuzz_dir = Path(args.oss_fuzz_dir).expanduser().resolve()
-    out_dir = Path(args.out_dir).expanduser()
-    db_path = Path(args.db_path).expanduser()
-
-    if args.command == "list-libraries":
-        print("Available libraries:", ", ".join(list_libraries(oss_fuzz_dir)) or "None")
-        return
-
-    if args.command == "list-analyzed":
-        print("Analyzed libraries:", ", ".join(list_analyzed(out_dir)) or "None")
-        return
-
-    if not args.library:
-        raise SystemExit("Library name required for analyze and fuzz commands")
-
-    setup_oss_fuzz(oss_fuzz_dir)
-    config = LibraryConfig.from_args(args, oss_fuzz_dir)
-
     if args.command == "analyze":
-        if not config.header_paths:
-            raise SystemExit("Header paths required for analyze command")
-        storage = open_storage(db_path)
-        run_id = storage.start_run("analyze", config.name, metadata={"out_dir": str(out_dir)})
-        try:
-            build_library(oss_fuzz_dir, config.name)
-            from preanalyze import analyze_library
-
-            analyze_library(
-                {
-                    "name": config.name,
-                    "header_paths": [str(p) for p in config.header_paths],
-                    "src_dir": str(config.src_dir),
-                    "exclude_prefixes": config.exclude_prefixes,
-                    "skip_functions": config.skip_functions,
-                },
-                str(out_dir),
-                storage=storage,
-                run_id=run_id,
-            )
-            storage.finish_run(run_id, "completed")
-        except Exception as exc:  # noqa: BLE001
-            storage.finish_run(run_id, "failed", {"error": str(exc)})
-            storage.close()
-            raise
-        storage.close()
-        return
-
-    if args.command == "fuzz":
-        storage = open_storage(db_path)
-        run_id = storage.start_run("fuzz", config.name, metadata={"out_dir": str(out_dir)})
-        try:
-            run_fuzzing(out_dir, config.name, oss_fuzz_dir, storage, run_id)
-            storage.finish_run(run_id, "completed")
-        except Exception as exc:  # noqa: BLE001
-            storage.finish_run(run_id, "failed", {"error": str(exc)})
-            storage.close()
-            raise
-        storage.close()
+        run_analyze(args)
+    elif args.command == "stage-corpus":
+        run_stage_corpus(args)
+    elif args.command == "collect-stats":
+        run_collect_stats(args)
+    elif args.command == "one-shot":
+        run_one_shot(args)
 
 
 if __name__ == "__main__":
