@@ -1,65 +1,64 @@
-# FuzzyGan: A Variational Autoencoder-Based Direct Fuzzing Framework
+# FuzzyGan: VAE-guided syzkaller pipeline for Linux kernel fuzzing
+
 ## Overview
-VAE-Fuzz is a modular, extensible fuzzing framework designed to enhance the fuzzing process for C/C++ libraries using a Variational Autoencoder (VAE) for intelligent input generation. It integrates with OSS-Fuzz, leveraging its build.sh scripts to compile libraries and analyze their functions for fuzzing suitability. The framework recursively scans header files (.h and .hpp) in a specified directory, generates LibFuzzer harnesses using Gemini's generative AI, and employs VAE to mutate seed corpora based on coverage feedback.
+This branch of FuzzyGan pivots from OSS-Fuzz/LibFuzzer harness generation to Linux kernel fuzzing with syzkaller. The pipeline:
+- Pre-analyzes the kernel tree, feeds code slices to an LLM, and emits syzlang programs plus seed corpora.
+- Uses a Variational Autoencoder (VAE) to mutate syz programs/corpora based on coverage feedback from syzkaller stats/logs.
+- Stores per-epoch metrics and corpus snapshots for later inspection/training.
 
 ## Project Structure
-The project is organized into the following files:
-- fuzzer.py: Main CLI entry point for library analysis, fuzzing, and 	  listing available/analyzed libraries.
-- preanalyze.py: Handles recursive header file analysis and AI-driven harness/seed generation using Gemini.
-- prompt.txt: Template for prompting Gemini to generate LibFuzzer harnesses and seeds.
-- vae_model.py: Defines the VAE model and loss function for input generation.
-- corpus_manager.py: Manages corpus loading, cleaning, and saving, including backup and zip archival.
-- fuzzer_runner.py: Executes fuzzers and computes coverage-based loss for VAE training.
-- vae_fuzzing.py: Implements VAE-based fuzzing with coverage feedback for a specific function.
+- fuzzer.py: CLI for kernel preanalysis (LLM -> syzlang) and corpus staging into syzkaller workdirs.
+- preanalyze.py: Kernel slicer + LLM caller that produces syzkaller programs/seeds and `analysis_summary.json`.
+- prompt.txt: Template prompt for generating syzlang scripts and seed corpora.
+- syzkaller_adapter.py: Helpers to read `manager.cfg`, stage corpora, and parse syzkaller stats/crash data.
+- vae_model.py: VAE architecture and loss.
+- corpus_manager.py: Corpus load/save utilities (now syzprog-aware).
+- vae_fuzzing.py: VAE training loop using syzkaller feedback and mutating syz corpora.
+- storage.py, policy.py: Run/event storage and adaptive mutation policy.
 
 ## Requirements
-
-- Python: 3.8+
-- Dependencies: torch, google-generativeai, numpy
-- Environment: Set GEMINI_API_KEY for Gemini API access.
-- OSS-Fuzz: A local clone of library or code you want to fuzz
-- Compiler: clang with AddressSanitizer and fuzzing support.
+- Python 3.8+
+- torch, google-generativeai, numpy
+- Environment: `GEMINI_API_KEY` for LLM calls
+- A local syzkaller checkout (now a submodule at `./syzkaller`) and a built kernel with kcov/KASAN/Config instrumentation.
+- A valid `manager.cfg` (example shown in the user prompt).
 
 Install dependencies:
-```python pip install torch google-generativeai numpy ```
+```
+pip install torch google-generativeai numpy
+```
 
 Set API key:
-```export GEMINI_API_KEY="your-api-key" ```
+```
+export GEMINI_API_KEY="your-api-key"
+```
 
-## Usage
-### Commands
+## Usage (syzkaller)
+- Preanalyze kernel and generate syz programs:
+```
+python fuzzer.py analyze --kernel-name linux --kernel-src /path/to/linux --focus-dirs drivers/net,fs,mm --out-dir fuzz_out
+```
+This writes `fuzz_out/linux/analysis_summary.json` plus `programs/*.syzprog` and seed corpora.
 
-List Available Libraries:Lists all libraries in oss-fuzz/projects/ with a build.sh file.
-```python fuzzer.py list-libraries --oss-fuzz-dir ./oss-fuzz ```
+- Stage generated programs and seeds into a syzkaller workdir (from `manager.cfg`):
+```
+python fuzzer.py stage-corpus --kernel-name linux --manager-cfg /path/to/manager.cfg --out-dir fuzz_out --fuzzer-prefix fuzzer-0
+```
 
+- One-shot (analyze + stage in one run):
+```
+python fuzzer.py one-shot --kernel-name linux --kernel-src /path/to/linux --manager-cfg /path/to/manager.cfg --out-dir fuzz_out --focus-dirs drivers,fs,net --fuzzer-prefix fuzzer-0
+```
+If `fuzz_out/<kernel>/programs` already contains prebuilt syz programs (as in this repo), `one-shot` will skip LLM preanalysis and just stage them.
 
-List Analyzed Libraries:Lists libraries with an analysis_summary.json in the output directory.
-```python fuzzer.py list-analyzed --out-dir fuzz_out --oss-fuzz-dir ./oss-fuzz ```
+- Train/mutate corpora with VAE feedback from syzkaller stats:
+```
+python vae_fuzzing.py --kernel linux --out-dir fuzz_out --syzkaller-workdir /path/to/workdir --stats-file /path/to/workdir/fuzzer.stats --epochs 100 --fuzz-seconds 60
+```
+The loop mutates `workdir/corpus/<prefix>` based on coverage/crash metrics parsed from syzkaller stats/log files.
 
-
-Analyze a Library:Builds the library using build.sh and analyzes all .h and .hpp files in the specified header directory.
-```python fuzzer.py analyze --library zlib --header-dir ./oss-fuzz/projects/zlib --exclude-prefixes zlib,get_crc --skip-functions zlibVersion,get_crc_table --out-dir fuzz_out --oss-fuzz-dir ./oss-fuzz ```
-
-
-Fuzz a Library:Compiles and runs fuzzers for all functions deemed worth fuzzing.
-```python fuzzer.py fuzz --library zlib --out-dir fuzz_out --oss-fuzz-dir ./oss-fuzz ```
-
-
-VAE-Based Fuzzing:Performs VAE-based fuzzing for a specific function, using coverage feedback to guide input generation.
-```python vae_fuzzing.py --function uncompress --library zlib --out-dir fuzz_out --oss-fuzz-dir ./oss-fuzz ```
-
-
-## Future Improvements
-
-Support for additional fuzzing engines (e.g., AFL++).
-Enhanced VAE/GAN model with dynamic input sizes.
-Integration with other AI models for harness generation.
-Parallel processing for faster analysis of large libraries.
-          
-            
-          
-        
-  
-        
+## Notes
+- The repository now tracks `syzkaller` as a submodule instead of OSS-Fuzz/Fuzz Introspector.
+- Ensure syzkaller `workdir` is writable and that the manager/fuzzer processes are running when you stage or mutate corpora.
     
 
