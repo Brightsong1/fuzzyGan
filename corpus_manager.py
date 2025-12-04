@@ -16,10 +16,13 @@ MAX_CORPUS_SIZE = 271
 LOG = logging.getLogger("fuzzygan.corpus")
 
 
+ALLOWED_SUFFIXES = {".bin", ".syzprog", ".prog", ".syz"}
+
+
 def load_corpus(corpus_dir: Path) -> torch.Tensor:
     corpus_dir.mkdir(parents=True, exist_ok=True)
     tensors: List[np.ndarray] = []
-    for seed_file in sorted(corpus_dir.glob("*.bin")):
+    for seed_file in sorted(p for p in corpus_dir.iterdir() if p.is_file() and p.suffix in ALLOWED_SUFFIXES):
         raw = seed_file.read_bytes()[:MAX_INPUT_SIZE]
         if len(raw) < MAX_INPUT_SIZE:
             raw += b"\x00" * (MAX_INPUT_SIZE - len(raw))
@@ -31,7 +34,7 @@ def load_corpus(corpus_dir: Path) -> torch.Tensor:
 
 def clean_corpus_dir(corpus_dir: Path) -> None:
     for item in corpus_dir.iterdir():
-        if item.is_file() and item.suffix != ".bin":
+        if item.is_file() and item.suffix not in ALLOWED_SUFFIXES:
             item.unlink()
 
 
@@ -70,6 +73,7 @@ def save_and_log_corpus(
     storage=None,
     run_id: int | None = None,
     function: str | None = None,
+    extension: str = ".bin",
 ) -> None:
     if data.numel() == 0:
         return
@@ -78,7 +82,7 @@ def save_and_log_corpus(
     num_samples = min(data.shape[0], MAX_CORPUS_SIZE)
     sample_bytes: List[tuple] = []
     for index in range(num_samples):
-        seed_name = f"{prefix}{index:04d}.bin"
+        seed_name = f"{prefix}{index:04d}{extension}"
         tensor = data[index]
         target_path = corpus_dir / seed_name
         raw = bytearray((tensor.clamp(0.0, 1.0) * 255).to(torch.uint8).cpu().numpy().tobytes())
@@ -86,7 +90,7 @@ def save_and_log_corpus(
         target_path.write_bytes(applied)
         sample_bytes.append((seed_name, applied))
 
-    for stale in sorted(corpus_dir.glob(f"{prefix}*.bin"))[num_samples:]:
+    for stale in sorted(corpus_dir.glob(f"{prefix}*{extension}"))[num_samples:]:
         stale.unlink()
 
     _log_seed_samples(sample_bytes)
