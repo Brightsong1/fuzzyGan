@@ -57,8 +57,4 @@ python vae_fuzzing.py --kernel linux --out-dir fuzz_out --syzkaller-workdir /pat
 ```
 The loop mutates `workdir/corpus/<prefix>` based on coverage/crash metrics parsed from syzkaller stats/log files.
 
-## Notes
-- The repository now tracks `syzkaller` as a submodule instead of OSS-Fuzz/Fuzz Introspector.
-- Ensure syzkaller `workdir` is writable and that the manager/fuzzer processes are running when you stage or mutate corpora.
-    
 
