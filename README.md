@@ -21,7 +21,7 @@ This branch of FuzzyGan pivots from OSS-Fuzz/LibFuzzer harness generation to Lin
 - torch, google-generativeai, numpy
 - Environment: `GEMINI_API_KEY` for LLM calls
 - A local syzkaller checkout (now a submodule at `./syzkaller`) and a built kernel with kcov/KASAN/Config instrumentation.
-- A valid `manager.cfg` (example shown in the user prompt).
+- A valid `manager.cfg` 
 
 Install dependencies:
 ```
@@ -40,7 +40,7 @@ python fuzzer.py analyze --kernel-name linux --kernel-src /path/to/linux --focus
 ```
 This writes `fuzz_out/linux/analysis_summary.json` plus `programs/*.syzprog` and seed corpora.
 
-- Stage generated programs and seeds into a syzkaller workdir (from `manager.cfg`):
+- Stage generated programs and seeds into a syzkaller workdir:
 ```
 python fuzzer.py stage-corpus --kernel-name linux --manager-cfg /path/to/manager.cfg --out-dir fuzz_out --fuzzer-prefix fuzzer-0
 ```
